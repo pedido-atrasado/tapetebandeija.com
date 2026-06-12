@@ -108,18 +108,18 @@ exports.handler = async (event) => {
           document_type: "CPF",
           document: String(customer.cpf || "").replace(/\D/g, ""),
         },
-        shipping: shipping,
       }),
     });
 
     const data = await response.json().catch(() => ({}));
 
-    if (!response.ok) {
+    if (!response.ok || data?.hasError) {
       return {
-        statusCode: response.status,
+        statusCode: response.status || 400,
         headers: cors,
         body: JSON.stringify({
-          error: data.message || data.error || "Erro ao criar transacao PIX",
+          error: data.message || data.error || data.details || data.response || 'Erro ao criar transacao PIX',
+          raw: data,
         }),
       };
     }
