@@ -1,7 +1,0 @@
-name = "tapetebandeja-pix"
-main = "src/worker.js"
-compatibility_date = "2026-06-11"
-
-[vars]
-ALLOWED_ORIGIN = "https://SEU-USUARIO.github.io"
-SHOP_URL = "https://SEU-USUARIO.github.io"
