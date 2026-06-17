@@ -93,7 +93,7 @@ exports.handler = async (event) => {
       };
     }
 
-    const baseUrl = (process.env.ZEROONEPAY_BASE_URL || "https://api.zeroonepay.com.br/api").replace(/\/$/, "");
+    const baseUrl = (process.env.ZEROONEPAY_BASE_URL || "https://api.zeroonepay.com.br/api/public/v1").replace(/\/$/, "");
     const externalId =
       String(tracking.sessionId || tracking.pageUrl || body.external_id || "")
         .replace(/[^a-zA-Z0-9_-]/g, "")
@@ -121,6 +121,16 @@ exports.handler = async (event) => {
           state: String(shipping?.address?.state || "").trim(),
           zip_code: String(shipping?.address?.zipCode || "").trim(),
         },
+        transaction_origin: "api",
+        expire_in_days: 1,
+        tracking: {
+          src: "tapete-bandeja",
+          utm_source: tracking.utmSource || "",
+          utm_medium: tracking.utmMedium || "",
+          utm_campaign: tracking.utmCampaign || "",
+          utm_term: tracking.utmTerm || "",
+          utm_content: tracking.utmContent || "",
+        },
         postback_url:
           `${process.env.URL || process.env.DEPLOY_PRIME_URL || ""}`.replace(/\/$/, "") +
           "/api/zeroonepay/webhook",
@@ -130,11 +140,6 @@ exports.handler = async (event) => {
           shipping,
           external_id: externalId,
           ip: getClientIp(event),
-          utm_source: tracking.utmSource || "",
-          utm_medium: tracking.utmMedium || "",
-          utm_campaign: tracking.utmCampaign || "",
-          utm_term: tracking.utmTerm || "",
-          utm_content: tracking.utmContent || "",
           utm_id: tracking.utmId || "",
         },
       }),

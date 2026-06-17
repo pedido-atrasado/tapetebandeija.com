@@ -48,7 +48,7 @@ exports.handler = async (event) => {
       };
     }
 
-    const baseUrl = (process.env.ZEROONEPAY_BASE_URL || "https://api.zeroonepay.com.br/api").replace(/\/$/, "");
+    const baseUrl = (process.env.ZEROONEPAY_BASE_URL || "https://api.zeroonepay.com.br/api/public/v1").replace(/\/$/, "");
     const response = await fetch(`${baseUrl}/transactions/${encodeURIComponent(paymentId)}?api_token=${encodeURIComponent(apiToken)}`, {
       method: "GET",
       headers: {
