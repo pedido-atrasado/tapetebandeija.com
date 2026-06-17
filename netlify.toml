@@ -23,6 +23,6 @@
   status = 200
 
 [[redirects]]
-  from = "/api/zeroonepay/webhook"
-  to = "/.netlify/functions/zeroonepay-webhook"
+  from = "/api/ticto/webhook"
+  to = "/.netlify/functions/ticto-webhook"
   status = 200

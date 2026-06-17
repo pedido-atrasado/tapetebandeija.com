@@ -1,7 +1,7 @@
 function safeJsonParse(text) {
   try {
     return JSON.parse(text || "{}");
-  } catch (_) {
+  } catch {
     return null;
   }
 }
@@ -9,9 +9,9 @@ function safeJsonParse(text) {
 function normalizeStatus(status) {
   const value = String(status || "").trim().toLowerCase();
   if (!value) return "pending";
-  if (["paid", "authorized", "approved"].includes(value)) return "paid";
-  if (["waiting payment", "waiting_payment", "pending", "waiting"].includes(value)) return "pending";
-  if (["failed", "refused", "canceled", "cancelled"].includes(value)) return "failed";
+  if (["paid", "authorized", "approved", "closed"].includes(value)) return "paid";
+  if (["waiting payment", "waiting_payment", "pending", "waiting", "processing"].includes(value)) return "pending";
+  if (["failed", "refused", "canceled", "cancelled", "aborted", "error", "expired"].includes(value)) return "failed";
   if (["chargeback", "refund", "refunded"].includes(value)) return "chargeback";
   return value;
 }
@@ -37,9 +37,7 @@ exports.handler = async (event) => {
   }
 
   const body = safeJsonParse(event.body) || {};
-  const payload = body.data || body.transaction || body.payment || body;
-  const status = normalizeStatus(payload.status || body.status);
-  const hash = String(payload.hash || payload.transaction_hash || payload.payment_id || body.hash || body.transactionId || "").trim();
+  const transaction = body.transaction || body.data || body.payment || body;
 
   return {
     statusCode: 200,
@@ -47,9 +45,11 @@ exports.handler = async (event) => {
     body: JSON.stringify({
       success: true,
       received: {
-        hash: hash || null,
-        status,
-        raw_status: payload.status || body.status || null,
+        transaction_hash: transaction.transaction_hash || transaction.hash || null,
+        status: normalizeStatus(transaction.status || body.status),
+        payment_method: transaction.payment_method || body.payment_method || null,
+        amount: transaction.amount ?? body.amount ?? null,
+        paid_at: transaction.paid_at || body.paid_at || null,
       },
     }),
   };
