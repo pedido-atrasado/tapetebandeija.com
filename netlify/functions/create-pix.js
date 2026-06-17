@@ -1,128 +1,81 @@
-const TICTO_AUTH_URL = "https://glados.ticto.cloud/api/security/oauth/token";
-const TICTO_API_BASE = "https://glados.ticto.cloud/api/v1";
-const DEFAULT_CHECKOUT_BASE_URL = "https://go.transacaomarketplace.com";
+const MANGOFY_API_BASE = "https://checkout.mangofy.com.br";
+const DEFAULT_POSTBACK_PATH = "/api/mangofy/webhook";
 
-function normalizeCpf(value) {
+function normalizeDigits(value) {
   return String(value || "").replace(/\D/g, "");
 }
 
-function normalizePhone(value) {
-  return String(value || "").replace(/\D/g, "");
+function normalizePhoneForGateway(value) {
+  let digits = normalizeDigits(value);
+  if (!digits) return "";
+  if (digits.startsWith("55") && digits.length >= 12) return digits;
+  if (digits.length === 10 || digits.length === 11) return `55${digits}`;
+  return digits;
 }
 
-function normalizeAmount(totalAmountCents) {
-  const cents = Number(totalAmountCents);
-  if (!Number.isFinite(cents) || cents <= 0) return 0;
-  return cents > 1000 ? Number((cents / 100).toFixed(2)) : cents;
+function centsToReais(cents) {
+  return Number((Number(cents) / 100).toFixed(2));
 }
 
-function toBase64Url(text) {
-  return Buffer.from(text, "utf8").toString("base64url");
+function makeExternalCode() {
+  return `tapete-bandeja-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function fromBase64Url(text) {
-  return Buffer.from(text, "base64url").toString("utf8");
+function getSiteBaseUrl() {
+  return (
+    String(process.env.SITE_URL || "").trim() ||
+    String(process.env.ALLOWED_ORIGIN || "").trim() ||
+    "https://tapetebandeja.netlify.app"
+  ).replace(/\/$/, "");
 }
 
-function encodePaymentRef(payload) {
-  return `ticto.${toBase64Url(JSON.stringify(payload))}`;
+function getPostbackUrl() {
+  return `${getSiteBaseUrl()}${DEFAULT_POSTBACK_PATH}`;
 }
 
-function decodePaymentRef(paymentId) {
-  const raw = String(paymentId || "");
-  if (!raw.startsWith("ticto.")) return null;
-
-  try {
-    const decoded = fromBase64Url(raw.slice("ticto.".length));
-    return JSON.parse(decoded);
-  } catch {
-    return null;
-  }
-}
-
-async function getTictoAccessToken() {
-  const clientId = String(process.env.TICTO_CLIENT_ID || "").trim();
-  const clientSecret = String(process.env.TICTO_CLIENT_SECRET || "").trim();
-
-  if (!clientId || !clientSecret) {
-    throw new Error("TICTO_CLIENT_ID ou TICTO_CLIENT_SECRET nao configurado");
-  }
-
-  const response = await fetch(TICTO_AUTH_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: JSON.stringify({
-      grant_type: "client_credentials",
-      client_id: clientId,
-      client_secret: clientSecret,
-      scope: "*",
-    }),
-  });
-
-  const data = await response.json().catch(() => ({}));
-
-  if (!response.ok || !data?.access_token) {
-    throw new Error(data?.message || data?.error || "Falha ao autenticar na Ticto");
-  }
-
-  return data.access_token;
-}
-
-async function resolveOffer({ token, offerCode, productId }) {
-  const normalizedOfferCode = String(offerCode || "").trim();
-  if (normalizedOfferCode) {
-    return { code: normalizedOfferCode, productId: productId ? String(productId).trim() : "" };
-  }
-
-  const normalizedProductId = String(productId || "").trim();
-  if (!normalizedProductId) {
-    throw new Error("Defina TICTO_OFFER_CODE ou TICTO_PRODUCT_ID");
-  }
-
-  const response = await fetch(
-    `${TICTO_API_BASE}/offers?product_id=${encodeURIComponent(normalizedProductId)}`,
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/json",
-      },
-    }
-  );
-
-  const data = await response.json().catch(() => ({}));
-  const offers = Array.isArray(data?.data) ? data.data : [];
-
-  if (!response.ok || !offers.length) {
-    throw new Error(
-      data?.message ||
-      data?.error ||
-      `Nao foi possivel localizar uma oferta na Ticto para o produto ${normalizedProductId}. Crie uma oferta no painel da Ticto ou configure TICTO_OFFER_CODE.`
-    );
-  }
-
-  const offer = offers.find((item) => item?.is_active !== false) || offers[0];
-
-  if (!offer?.code) {
-    throw new Error("Oferta da Ticto sem code valido");
+function buildHeaders() {
+  const apiKey = String(process.env.MANGOFY_API_KEY || "").trim();
+  if (!apiKey) {
+    throw new Error("MANGOFY_API_KEY nao configurado");
   }
 
   return {
-    code: String(offer.code).trim(),
-    productId: String(offer?.product?.id || normalizedProductId || "").trim(),
+    Authorization: apiKey,
+    "Content-Type": "application/json",
+    Accept: "application/json",
   };
 }
 
-function buildCheckoutUrl(offerCode) {
-  const directUrl = String(process.env.TICTO_CHECKOUT_URL || "").trim();
-  if (directUrl) {
-    return directUrl;
-  }
+function normalizeResponseStatus(status) {
+  const value = String(status || "").trim().toLowerCase();
+  if (!value) return "pending";
+  if (["paid", "approved", "authorized", "closed"].includes(value)) return "paid";
+  if (["pending", "waiting", "waiting_payment", "in_process", "processing"].includes(value)) return "pending";
+  if (["refused", "canceled", "cancelled", "expired", "gateway_error", "system_error", "failed"].includes(value)) return "failed";
+  return value;
+}
 
-  const baseUrl = String(process.env.TICTO_CHECKOUT_BASE_URL || DEFAULT_CHECKOUT_BASE_URL).replace(/\/$/, "");
-  return `${baseUrl}/${encodeURIComponent(offerCode)}`;
+function extractPixText(data) {
+  return (
+    data?.pix?.pix_qrcode_text ||
+    data?.pix?.qrcode_text ||
+    data?.pix?.pix_qrcode ||
+    data?.pix?.payload ||
+    data?.pix_qrcode_text ||
+    data?.pix_qrcode ||
+    data?.payment?.pix?.pix_qrcode_text ||
+    ""
+  );
+}
+
+function extractPixImage(data) {
+  return (
+    data?.pix?.pix_qrcode_image ||
+    data?.pix?.qrcode_image ||
+    data?.pix?.qrcode ||
+    data?.pix_qrcode_image ||
+    ""
+  );
 }
 
 exports.handler = async (event) => {
@@ -153,94 +106,138 @@ exports.handler = async (event) => {
     const customer = body.customer || {};
     const tracking = body.tracking || {};
 
-    const amountCents = Number(pricing.totalAmountCents ?? pricing.totalAmount ?? body.amount ?? 0) || 0;
-    const totalAmount = normalizeAmount(amountCents);
+    const totalAmountCents = Number(pricing.totalAmountCents ?? pricing.totalAmount ?? body.amount ?? 0) || 0;
+    const kitAmountCents = Number(pricing.kitAmountCents ?? 0) || Math.max(totalAmountCents - Number(pricing.shippingAmountCents ?? 0), 0);
+    const shippingAmountCents = Number(pricing.shippingAmountCents ?? 0) || 0;
 
-    if (!totalAmount || !customer.name || !customer.email || !customer.cpf) {
+    if (totalAmountCents < 500) {
+      return {
+        statusCode: 400,
+        headers: cors,
+        body: JSON.stringify({ error: "Valor minimo para Pix e R$ 5,00" }),
+      };
+    }
+
+    if (!customer.name || !customer.email || !customer.cpf) {
       return {
         statusCode: 400,
         headers: cors,
         body: JSON.stringify({
-          error: "Faltam dados: totalAmount, customer.name, customer.email, customer.cpf",
+          error: "Faltam dados: customer.name, customer.email, customer.cpf",
         }),
       };
     }
 
-    const offerCodeEnv = String(process.env.TICTO_OFFER_CODE || "").trim();
-    const productIdEnv = String(process.env.TICTO_PRODUCT_ID || "").trim();
-    let offer = null;
+    const externalCode = makeExternalCode();
+    const response = await fetch(`${MANGOFY_API_BASE}/api/v1/payment`, {
+      method: "POST",
+      headers: buildHeaders(),
+      body: JSON.stringify({
+        external_code: externalCode,
+        payment_format: "regular",
+        payment_method: "pix",
+        installments: 1,
+        payment_amount: totalAmountCents,
+        shipping_amount: shippingAmountCents,
+        postback_url: getPostbackUrl(),
+        items: [
+          {
+            code: "tapete-bandeja",
+            name: `Tapete Bandeja ${vehicle.brand || ""} ${vehicle.model || ""}`.trim(),
+            quantity: 1,
+            price: kitAmountCents || totalAmountCents,
+            photo: "",
+            description: "Tapete Bandeja 3D",
+            digital_flag: false,
+          },
+        ],
+        customer: {
+          email: String(customer.email || "").trim(),
+          name: String(customer.name || "").trim(),
+          document: normalizeDigits(customer.cpf),
+          phone: normalizePhoneForGateway(customer.phone || customer.phone_number || ""),
+          ip:
+            String(event.headers?.["x-forwarded-for"] || event.headers?.["X-Forwarded-For"] || "").split(",")[0].trim() ||
+            String(event.headers?.["client-ip"] || event.headers?.["Client-IP"] || "").trim() ||
+            "127.0.0.1",
+        },
+        pix: {
+          expires_in_days: 1,
+        },
+        extra: {
+          metadata: {
+            utm_source: tracking.utmSource || "",
+            utm_medium: tracking.utmMedium || "",
+            utm_campaign: tracking.utmCampaign || "",
+            utm_term: tracking.utmTerm || "",
+            utm_content: tracking.utmContent || "",
+            page_url: tracking.pageUrl || "",
+            pedido_origem: "checkout-api",
+            vehicle_type: vehicle.type || "",
+            brand: vehicle.brand || "",
+            model: vehicle.model || "",
+            year: vehicle.year || "",
+            color: vehicle.color || "",
+            kit: vehicle.kit || "",
+          },
+        },
+      }),
+    });
 
-    if (offerCodeEnv) {
-      offer = {
-        code: offerCodeEnv,
-        productId: productIdEnv,
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      return {
+        statusCode: response.status,
+        headers: cors,
+        body: JSON.stringify({
+          error:
+            data?.message ||
+            data?.error ||
+            data?.errors?.[0]?.message ||
+            "Nao foi possivel gerar o Pix na Mangoofy",
+          raw: data,
+        }),
       };
-    } else {
-      const token = await getTictoAccessToken();
-      offer = await resolveOffer({
-        token,
-        offerCode: offerCodeEnv,
-        productId: productIdEnv,
-      });
     }
 
-    const checkoutUrl = buildCheckoutUrl(offer.code);
-    const paymentRef = encodePaymentRef({
-      provider: "ticto",
-      offerCode: offer.code,
-      productId: offer.productId || String(process.env.TICTO_PRODUCT_ID || ""),
-      checkoutUrl,
-      customer: {
-        name: String(customer.name || "").trim(),
-        email: String(customer.email || "").trim(),
-        cpf: normalizeCpf(customer.cpf),
-        phone: normalizePhone(customer.phone || customer.phone_number || ""),
-      },
-      shipping: {
-        zipCode: String(shipping?.address?.zipCode || "").trim(),
-      },
-      vehicle: {
-        type: vehicle.type || "",
-        brand: vehicle.brand || "",
-        model: vehicle.model || "",
-        year: vehicle.year || "",
-      },
-      pricing: {
-        totalAmountCents: Number(pricing.totalAmountCents ?? pricing.totalAmount ?? body.amount ?? 0) || 0,
-      },
-      tracking: {
-        utmSource: tracking.utmSource || "",
-        utmMedium: tracking.utmMedium || "",
-        utmCampaign: tracking.utmCampaign || "",
-        utmTerm: tracking.utmTerm || "",
-        utmContent: tracking.utmContent || "",
-      },
-      createdAt: Date.now(),
-    });
+    const paymentCode = String(
+      data?.payment_code ||
+      data?.payment?.payment_code ||
+      data?.code ||
+      externalCode
+    ).trim();
+
+    const pixText = extractPixText(data);
+    const pixImage = extractPixImage(data);
+    const paymentStatus = normalizeResponseStatus(data?.payment_status || data?.status || "pending");
 
     return {
       statusCode: 200,
       headers: cors,
       body: JSON.stringify({
-        transactionId: paymentRef,
-        transaction_id: paymentRef,
-        payment_id: paymentRef,
-        status: "pending",
-        raw_status: "checkout_link",
-        amount: amountCents,
-        total_amount: totalAmount,
-        checkout_url: checkoutUrl,
-        pix_payload: checkoutUrl,
-        pix_qrcode: checkoutUrl,
+        payment_code: paymentCode,
+        payment_id: paymentCode,
+        transactionId: paymentCode,
+        transaction_id: paymentCode,
+        status: paymentStatus,
+        raw_status: data?.payment_status || data?.status || "pending",
+        amount: totalAmountCents,
+        total_amount: centsToReais(totalAmountCents),
+        checkout_url: data?.checkout_url || null,
+        pix_payload: pixText,
+        pix_qrcode: pixText,
+        pix_qrcode_image: pixImage,
         pix: {
-          payload: checkoutUrl,
-          qrcode: checkoutUrl,
-          qrCode: checkoutUrl,
+          payload: pixText,
+          qrcode: pixText,
+          qrCode: pixText,
+          image: pixImage,
+          pix_qrcode_text: pixText,
+          pix_qrcode_image: pixImage,
         },
-        offer: {
-          code: offer.code,
-          productId: offer.productId || null,
-        },
+        external_code: externalCode,
+        raw: data,
       }),
     };
   } catch (err) {
@@ -251,5 +248,3 @@ exports.handler = async (event) => {
     };
   }
 };
-
-exports._decodePaymentRef = decodePaymentRef;

@@ -36,3 +36,13 @@
   from = "/api/appmax/health"
   to = "/.netlify/functions/appmax-health"
   status = 200
+
+[[redirects]]
+  from = "/api/infinitpay/webhook"
+  to = "/.netlify/functions/infinitpay-webhook"
+  status = 200
+
+[[redirects]]
+  from = "/api/mangofy/webhook"
+  to = "/.netlify/functions/mangofy-webhook"
+  status = 200
