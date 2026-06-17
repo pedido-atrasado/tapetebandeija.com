@@ -116,6 +116,11 @@ async function resolveOffer({ token, offerCode, productId }) {
 }
 
 function buildCheckoutUrl(offerCode) {
+  const directUrl = String(process.env.TICTO_CHECKOUT_URL || "").trim();
+  if (directUrl) {
+    return directUrl;
+  }
+
   const baseUrl = String(process.env.TICTO_CHECKOUT_BASE_URL || DEFAULT_CHECKOUT_BASE_URL).replace(/\/$/, "");
   return `${baseUrl}/${encodeURIComponent(offerCode)}`;
 }
