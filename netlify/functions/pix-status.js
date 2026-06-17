@@ -30,7 +30,7 @@ exports.handler = async (event) => {
   }
 
   try {
-    const paymentId = event.queryStringParameters?.payment_id || "";
+    const paymentId = event.queryStringParameters?.payment_id || event.queryStringParameters?.hash || "";
     if (!paymentId) {
       return {
         statusCode: 400,
@@ -39,20 +39,19 @@ exports.handler = async (event) => {
       };
     }
 
-    const privateToken = process.env.RISEPAY_PRIVATE_TOKEN || process.env.RISEPAY_API_TOKEN || "";
-    if (!privateToken) {
+    const apiToken = process.env.ZEROONEPAY_API_TOKEN || process.env.ZEROONEPAY_TOKEN || "";
+    if (!apiToken) {
       return {
         statusCode: 500,
         headers: cors,
-        body: JSON.stringify({ error: "RISEPAY_PRIVATE_TOKEN nao configurado" }),
+        body: JSON.stringify({ error: "ZEROONEPAY_API_TOKEN nao configurado" }),
       };
     }
 
-    const baseUrl = (process.env.RISEPAY_BASE_URL || "https://api.risepay.com.br").replace(/\/$/, "");
-    const response = await fetch(`${baseUrl}/api/External/Transactions/${encodeURIComponent(paymentId)}`, {
+    const baseUrl = (process.env.ZEROONEPAY_BASE_URL || "https://api.zeroonepay.com.br/api").replace(/\/$/, "");
+    const response = await fetch(`${baseUrl}/transactions/${encodeURIComponent(paymentId)}?api_token=${encodeURIComponent(apiToken)}`, {
       method: "GET",
       headers: {
-        Authorization: privateToken,
         "Content-Type": "application/json",
       },
     });
@@ -74,9 +73,9 @@ exports.handler = async (event) => {
       statusCode: 200,
       headers: cors,
       body: JSON.stringify({
-        payment_id: String(object?.identifier || object?.id || paymentId),
-        transactionId: String(object?.identifier || object?.id || paymentId),
-        transaction_id: String(object?.identifier || object?.id || paymentId),
+        payment_id: String(object?.hash || object?.identifier || object?.id || paymentId),
+        transactionId: String(object?.hash || object?.identifier || object?.id || paymentId),
+        transaction_id: String(object?.hash || object?.identifier || object?.id || paymentId),
         status: normalizeStatus(object?.status || data?.status),
         amount: object?.amount ?? data?.amount ?? null,
         raw_status: object?.status || data?.status || null,

@@ -21,3 +21,8 @@
   from = "/api/monitor/event"
   to = "/.netlify/functions/monitor-event"
   status = 200
+
+[[redirects]]
+  from = "/api/zeroonepay/webhook"
+  to = "/.netlify/functions/zeroonepay-webhook"
+  status = 200

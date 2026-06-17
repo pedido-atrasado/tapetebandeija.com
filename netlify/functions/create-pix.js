@@ -14,7 +14,7 @@ function getClientIp(event) {
   );
 }
 
-function normalizeRisePayStatus(status) {
+function normalizeZeroOnePayStatus(status) {
   const value = String(status || "").trim().toLowerCase();
   if (!value) return "pending";
   if (["paid", "authorized", "approved"].includes(value)) return "paid";
@@ -71,82 +71,78 @@ exports.handler = async (event) => {
       };
     }
 
-    const privateToken = process.env.RISEPAY_PRIVATE_TOKEN || process.env.RISEPAY_API_TOKEN || "";
-    if (!privateToken) {
+    const apiToken = process.env.ZEROONEPAY_API_TOKEN || process.env.ZEROONEPAY_TOKEN || "";
+    if (!apiToken) {
       return {
         statusCode: 500,
         headers: cors,
         body: JSON.stringify({
-          error: "RISEPAY_PRIVATE_TOKEN nao configurado",
+          error: "ZEROONEPAY_API_TOKEN nao configurado",
         }),
       };
     }
 
-    const baseUrl = (process.env.RISEPAY_BASE_URL || "https://api.risepay.com.br").replace(/\/$/, "");
+    const offerHash = String(process.env.ZEROONEPAY_OFFER_HASH || "").trim();
+    if (!offerHash) {
+      return {
+        statusCode: 500,
+        headers: cors,
+        body: JSON.stringify({
+          error: "ZEROONEPAY_OFFER_HASH nao configurado",
+        }),
+      };
+    }
+
+    const baseUrl = (process.env.ZEROONEPAY_BASE_URL || "https://api.zeroonepay.com.br/api").replace(/\/$/, "");
     const externalId =
       String(tracking.sessionId || tracking.pageUrl || body.external_id || "")
         .replace(/[^a-zA-Z0-9_-]/g, "")
         .slice(0, 60) || `tapete_${Date.now()}`;
 
-    const response = await fetch(`${baseUrl}/api/External/Transactions`, {
+    const response = await fetch(`${baseUrl}/transactions?api_token=${encodeURIComponent(apiToken)}`, {
       method: "POST",
       headers: {
-        Authorization: privateToken,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
         amount: totalAmount,
-        currency: "BRL",
-        payment: {
-          method: "pix",
-          expiresAt: 48,
-        },
+        offer_hash: offerHash,
+        payment_method: "pix",
         customer: {
           name: String(customer.name || "").trim(),
           email: String(customer.email || "").trim(),
-          phone: toE164(customer.phone),
-          cpf: String(customer.cpf || "").replace(/\D/g, ""),
-          address: {
-            street: String(shipping?.address?.street || "").trim(),
-            number: String(shipping?.address?.streetNumber || shipping?.address?.number || "").trim(),
-            complement: String(shipping?.address?.complement || "").trim(),
-            neighborhood: String(shipping?.address?.neighborhood || "").trim(),
-            city: String(shipping?.address?.city || "").trim(),
-            state: String(shipping?.address?.state || "").trim(),
-            zipCode: String(shipping?.address?.zipCode || "").trim(),
-          },
+          phone_number: String(customer.phone || customer.phone_number || "").replace(/\D/g, ""),
+          document: String(customer.cpf || customer.document || "").replace(/\D/g, ""),
+          street_name: String(shipping?.address?.street || "").trim(),
+          number: String(shipping?.address?.streetNumber || shipping?.address?.number || "").trim(),
+          complement: String(shipping?.address?.complement || "").trim(),
+          neighborhood: String(shipping?.address?.neighborhood || "").trim(),
+          city: String(shipping?.address?.city || "").trim(),
+          state: String(shipping?.address?.state || "").trim(),
+          zip_code: String(shipping?.address?.zipCode || "").trim(),
         },
-        tracking: {
-          src: "tapete-bandeja",
-          utmSource: tracking.utmSource || "",
-          utmMedium: tracking.utmMedium || "",
-          utmCampaign: tracking.utmCampaign || "",
-          utmTerm: tracking.utmTerm || "",
-          utmContent: tracking.utmContent || "",
-          utmId: tracking.utmId || "",
-        },
+        postback_url:
+          `${process.env.URL || process.env.DEPLOY_PRIME_URL || ""}`.replace(/\/$/, "") +
+          "/api/zeroonepay/webhook",
         metadata: {
           vehicle,
           pricing,
           shipping,
           external_id: externalId,
           ip: getClientIp(event),
+          utm_source: tracking.utmSource || "",
+          utm_medium: tracking.utmMedium || "",
+          utm_campaign: tracking.utmCampaign || "",
+          utm_term: tracking.utmTerm || "",
+          utm_content: tracking.utmContent || "",
+          utm_id: tracking.utmId || "",
         },
-        externalReference: externalId,
-        items: [
-          {
-            id: vehicle.kit || "tapete-bandeja-3d",
-            description: `${vehicle.brand || ""} ${vehicle.model || ""} ${vehicle.year || ""}`.trim() || "Tapete Bandeja 3D",
-            quantity: 1,
-            price: totalAmount,
-          },
-        ],
       }),
     });
 
     const data = await response.json().catch(() => ({}));
 
-    const object = data?.object || data;
+    const object = data?.data || data?.object || data;
 
     if (!response.ok || data?.hasError || data?.success === false) {
       return {
@@ -159,9 +155,10 @@ exports.handler = async (event) => {
       };
     }
 
-    const paymentId = String(object?.identifier || object?.id || data?.identifier || "");
-    const payload = String(object?.pix?.qrCode || object?.pix?.payload || data?.pix?.qrCode || data?.pix?.payload || "");
-    const normalizedStatus = normalizeRisePayStatus(object?.status || data?.status);
+    const paymentId = String(object?.hash || object?.identifier || object?.id || data?.hash || "");
+    const payload = String(object?.pix_code || object?.qr_code || object?.pix?.qrCode || object?.pix?.payload || data?.pix_code || data?.qr_code || data?.pix?.qrCode || data?.pix?.payload || "");
+    const qrCode = String(object?.qr_code || object?.pix?.qrCode || object?.pix?.payload || data?.qr_code || data?.pix?.qrCode || data?.pix?.payload || payload);
+    const normalizedStatus = normalizeZeroOnePayStatus(object?.status || data?.status);
 
     return {
       statusCode: 200,
@@ -174,11 +171,11 @@ exports.handler = async (event) => {
         raw_status: object?.status || data?.status || null,
         total_amount: object?.amount ?? data?.amount ?? totalAmount,
         pix_payload: payload,
-        pix_qrcode: payload,
+        pix_qrcode: qrCode,
         pix: {
           payload,
-          qrcode: payload,
-          qrCode: payload,
+          qrcode: qrCode,
+          qrCode,
         },
       }),
     };
