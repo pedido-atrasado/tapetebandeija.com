@@ -96,7 +96,11 @@ async function resolveOffer({ token, offerCode, productId }) {
   const offers = Array.isArray(data?.data) ? data.data : [];
 
   if (!response.ok || !offers.length) {
-    throw new Error(data?.message || data?.error || "Nao foi possivel localizar a oferta da Ticto");
+    throw new Error(
+      data?.message ||
+      data?.error ||
+      `Nao foi possivel localizar uma oferta na Ticto para o produto ${normalizedProductId}. Crie uma oferta no painel da Ticto ou configure TICTO_OFFER_CODE.`
+    );
   }
 
   const offer = offers.find((item) => item?.is_active !== false) || offers[0];
