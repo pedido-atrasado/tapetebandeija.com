@@ -10,13 +10,19 @@ function normalizeStatus(status) {
 }
 
 function buildHeaders() {
-  const apiKey = String(process.env.MANGOFY_API_KEY || "").trim();
+  const apiKey = String(
+    process.env.MANGOFY_API_KEY ||
+    process.env.MANGOFY_API_TOKEN ||
+    process.env.API_KEY ||
+    ""
+  ).trim();
   if (!apiKey) {
     throw new Error("MANGOFY_API_KEY nao configurado");
   }
 
   return {
     Authorization: apiKey,
+    "X-API-Key": apiKey,
     Accept: "application/json",
   };
 }
