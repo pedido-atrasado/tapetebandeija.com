@@ -34,7 +34,29 @@ function getPostbackUrl() {
 }
 
 function buildHeaders() {
+  const apiKey = String(
+    process.env.MANGOFY_API_KEY ||
+    process.env.MANGOFY_API_TOKEN ||
+    process.env.API_KEY ||
+    ""
+  ).trim();
+  if (!apiKey) {
+    throw new Error("MANGOFY_API_KEY nao configurado");
+  }
+
+  const storeCode = String(
+    process.env.MANGOFY_STORE_CODE ||
+    process.env.STORE_CODE ||
+    ""
+  ).trim();
+  if (!storeCode) {
+    throw new Error("MANGOFY_STORE_CODE nao configurado");
+  }
+
   return {
+    Authorization: apiKey,
+    "X-API-Key": apiKey,
+    "Store-Code": storeCode,
     "Content-Type": "application/json",
     Accept: "application/json",
   };
