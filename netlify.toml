@@ -46,3 +46,8 @@
   from = "/api/mangofy/webhook"
   to = "/.netlify/functions/mangofy-webhook"
   status = 200
+
+[[redirects]]
+  from = "/api/mangofy/debug"
+  to = "/.netlify/functions/mangofy-debug"
+  status = 200
