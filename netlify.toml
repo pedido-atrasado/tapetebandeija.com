@@ -31,3 +31,8 @@
   from = "/api/appmax/webhook"
   to = "/.netlify/functions/appmax-webhook"
   status = 200
+
+[[redirects]]
+  from = "/api/appmax/health"
+  to = "/.netlify/functions/appmax-health"
+  status = 200
