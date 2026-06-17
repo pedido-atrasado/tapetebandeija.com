@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  var PIXEL_ID = "1490480055689230";
+  var PIXEL_ID = "2066750830865892";
   var TEST_EVENT_CODE = "";
   var CAPI_ENDPOINT = "/api/meta-capi/event";
   var MONITOR_ENDPOINT = "/api/monitor/event";
