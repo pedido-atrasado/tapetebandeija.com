@@ -26,3 +26,8 @@
   from = "/api/ticto/webhook"
   to = "/.netlify/functions/ticto-webhook"
   status = 200
+
+[[redirects]]
+  from = "/api/appmax/webhook"
+  to = "/.netlify/functions/appmax-webhook"
+  status = 200
