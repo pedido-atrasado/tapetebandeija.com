@@ -1,5 +1,6 @@
 const DEFAULT_SITE_URL = "https://tapetebandeja.netlify.app";
-const DEFAULT_WEBHOOK_PATH = "/api/vega/webhook";
+const DEFAULT_POSTBACK_PATH = "/api/risepay/webhook";
+const RISEPAY_API_BASE = "https://api.risepay.com.br";
 
 function normalizeDigits(value) {
   return String(value || "").replace(/\D/g, "");
@@ -11,10 +12,6 @@ function normalizePhoneForGateway(value) {
   if (digits.startsWith("55") && digits.length >= 12) return digits;
   if (digits.length === 10 || digits.length === 11) return `55${digits}`;
   return digits;
-}
-
-function centsToReais(cents) {
-  return Number((Number(cents) / 100).toFixed(2));
 }
 
 function makeExternalCode() {
@@ -29,116 +26,52 @@ function getSiteBaseUrl() {
   ).replace(/\/$/, "");
 }
 
-function getWebhookUrl() {
-  return `${getSiteBaseUrl()}${DEFAULT_WEBHOOK_PATH}`;
+function getPostbackUrl() {
+  return `${getSiteBaseUrl()}${DEFAULT_POSTBACK_PATH}`;
 }
 
-function getCheckoutBaseUrl() {
-  const baseUrl = String(
-    process.env.VEGA_CHECKOUT_BASE_URL ||
-    process.env.VEGA_API_BASE_URL ||
-    process.env.VEGA_BASE_URL ||
-    ""
-  ).trim().replace(/\/$/, "");
-
-  return baseUrl || "https://checkout.vegacheckout.com.br";
-}
-
-function getApiKey() {
+function getPrivateToken() {
   return String(
-    process.env.VEGA_API_KEY ||
-    process.env.VEGA_API_TOKEN ||
+    process.env.RISEPAY_PRIVATE_TOKEN ||
+    process.env.RISEPAY_API_PRIVATE_TOKEN ||
+    process.env.RISEPAY_TOKEN_PRIVATE ||
+    process.env.MANGOFY_API_KEY ||
+    process.env.MANGOFY_API_TOKEN ||
     process.env.API_KEY ||
     ""
   ).trim();
 }
 
-function getDomainHeader() {
-  const explicit = String(process.env.VEGA_DOMAIN || process.env.VEGA_CHECKOUT_DOMAIN || "").trim();
-  if (explicit) {
-    return explicit.replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
-  }
-
-  try {
-    return new URL(getCheckoutBaseUrl()).hostname;
-  } catch {
-    return new URL(getSiteBaseUrl()).hostname;
-  }
-}
-
-function buildHeaders() {
-  const apiKey = getApiKey();
-  const domain = getDomainHeader();
-
-  if (!apiKey) {
-    throw new Error("VEGA_API_KEY nao configurado");
-  }
-  if (!domain) {
-    throw new Error("VEGA_DOMAIN nao configurado");
-  }
-
-  return {
-    "api-key": apiKey,
-    "x-domain": domain,
-    "Content-Type": "application/json",
-    Accept: "application/json",
-  };
-}
-
 function normalizeStatus(status) {
   const value = String(status || "").trim().toLowerCase();
   if (!value) return "pending";
-  if (["paid", "approved", "authorized", "closed"].includes(value)) return "paid";
-  if (["pending", "waiting", "waiting_payment", "in_process", "processing", "success"].includes(value)) return "pending";
-  if (["refused", "canceled", "cancelled", "expired", "gateway_error", "system_error", "failed"].includes(value)) return "failed";
+  if (["paid", "approved", "authorized", "closed", "paid "].includes(value)) return "paid";
+  if (["waiting payment", "waiting_payment", "pending", "in_process", "processing", "waiting"].includes(value)) return "pending";
+  if (["refused", "canceled", "cancelled", "expired", "chargeback", "gateway_error", "system_error", "refunded", "underpaid", "overpaid"].includes(value)) return "failed";
   return value;
 }
 
-function buildCustomerAddress(shipping, body) {
-  const address = shipping?.address || body?.address || body?.customer?.address || {};
-  return {
-    street: String(address.street || "").trim(),
-    number: String(address.number || "").trim(),
-    complement: String(address.complement || "").trim(),
-    district: String(address.neighborhood || address.district || "").trim(),
-    city: String(address.city || "").trim(),
-    state: String(address.state || "").trim(),
-    zipcode: normalizeDigits(address.zipCode || address.zipcode || ""),
-    country: "BR",
-  };
-}
-
-function extractVegaResponse(root) {
-  const data = root?.data || root || {};
-  const pixText =
-    data?.pix_copy_paste ||
-    data?.pix_qrcode_text ||
-    data?.pix_qrcode ||
-    data?.pix?.pix_copy_paste ||
+function extractPixText(data) {
+  return (
+    data?.object?.pix?.qrCode ||
+    data?.pix?.qrCode ||
     data?.pix?.pix_qrcode_text ||
     data?.pix?.qrcode ||
-    root?.pix_copy_paste ||
-    "";
+    data?.pix_qrcode_text ||
+    data?.pix_qrcode ||
+    ""
+  );
+}
 
-  const pixImage =
+function extractPixImage(data) {
+  return (
+    data?.object?.pix?.image ||
+    data?.pix?.image ||
     data?.pix_code_image64 ||
     data?.pix_qrcode_image64 ||
     data?.pix_qrcode_image ||
-    data?.pix?.pix_code_image64 ||
-    data?.pix?.pix_qrcode_image ||
-    root?.pix_code_image64 ||
-    "";
-
-  const paymentCode =
-    data?.transaction_token ||
-    data?.payment_code ||
-    data?.external_code ||
-    root?.transaction_token ||
-    "";
-
-  const rawStatus = data?.payment_status || data?.status || root?.payment_status || root?.status || "pending";
-
-  return { pixText, pixImage, paymentCode, rawStatus, data };
+    ""
+  );
 }
 
 exports.handler = async (event) => {
@@ -162,12 +95,9 @@ exports.handler = async (event) => {
   }
 
   try {
-    const checkoutBaseUrl = getCheckoutBaseUrl();
-    const apiKey = getApiKey();
-    const domain = getDomainHeader();
-
-    if (!apiKey) {
-      throw new Error("VEGA_API_KEY nao configurado");
+    const privateToken = getPrivateToken();
+    if (!privateToken) {
+      throw new Error("RISEPAY_PRIVATE_TOKEN nao configurado");
     }
 
     const body = JSON.parse(event.body || "{}");
@@ -180,7 +110,6 @@ exports.handler = async (event) => {
     const totalAmountCents = Number(pricing.totalAmountCents ?? pricing.totalAmount ?? body.amount ?? 0) || 0;
     const kitAmountCents = Number(pricing.kitAmountCents ?? 0) || Math.max(totalAmountCents - Number(pricing.shippingAmountCents ?? 0), 0);
     const shippingAmountCents = Number(pricing.shippingAmountCents ?? 0) || 0;
-    const discountAmountCents = Number(pricing.pixDiscountCents ?? 0) || 0;
 
     if (totalAmountCents < 500) {
       return {
@@ -202,46 +131,70 @@ exports.handler = async (event) => {
 
     const externalCode = makeExternalCode();
     const payload = {
+      amount: Number((totalAmountCents / 100).toFixed(2)),
+      currency: "BRL",
+      payment: {
+        method: "pix",
+        expiresAt: 48,
+      },
       customer: {
         name: String(customer.name || "").trim(),
         email: String(customer.email || "").trim(),
-        document: normalizeDigits(customer.cpf),
+        cpf: normalizeDigits(customer.cpf),
         phone: normalizePhoneForGateway(customer.phone || customer.phone_number || ""),
-        address: buildCustomerAddress(shipping, body),
+        address: {
+          street: String(shipping?.address?.street || body?.address?.street || "").trim(),
+          number: String(shipping?.address?.number || body?.address?.number || "").trim(),
+          complement: String(shipping?.address?.complement || body?.address?.complement || "").trim(),
+          neighborhood: String(shipping?.address?.neighborhood || body?.address?.neighborhood || "").trim(),
+          city: String(shipping?.address?.city || body?.address?.city || "").trim(),
+          state: String(shipping?.address?.state || body?.address?.state || "").trim(),
+          zipCode: normalizeDigits(shipping?.address?.zipCode || body?.address?.zipCode || ""),
+        },
       },
-      payment: {
-        method: "pix",
-        payment_value: totalAmountCents,
-        freight_value: shippingAmountCents,
-        discount_value: discountAmountCents,
-        external_code: externalCode,
-        currency: "BRL",
+      tracking: {
+        src: tracking.src || "checkout_web",
+        utmSource: tracking.utmSource || "",
+        utmMedium: tracking.utmMedium || "",
+        utmCampaign: tracking.utmCampaign || "",
+        utmTerm: tracking.utmTerm || "",
+        utmContent: tracking.utmContent || "",
+        utmId: tracking.utmId || "",
       },
-      products: [
+      postBackUrl: getPostbackUrl(),
+      externalReference: externalCode,
+      metadata: {
+        pedido_origem: "checkout-api",
+        vehicle_type: vehicle.type || "",
+        brand: vehicle.brand || "",
+        model: vehicle.model || "",
+        year: vehicle.year || "",
+        color: vehicle.color || "",
+        kit: vehicle.kit || "",
+        shipping_label: shipping.label || "",
+        shipping_deadline: shipping.deadline || "",
+      },
+      items: [
         {
-          code: "tapete-bandeja",
-          name: `Tapete Bandeja ${vehicle.brand || ""} ${vehicle.model || ""}`.trim(),
-          price: kitAmountCents || totalAmountCents,
+          id: "tapete-bandeja",
+          description: `Tapete Bandeja ${vehicle.brand || ""} ${vehicle.model || ""}`.trim(),
           quantity: 1,
-          is_digital: false,
-          description: "Tapete Bandeja 3D",
-          image_url: String(vehicle.image || "").trim(),
+          price: Number((kitAmountCents / 100).toFixed(2)),
         },
       ],
-      notification_url: getWebhookUrl(),
-      src: tracking.src || "checkout_web",
-      utm_medium: tracking.utmMedium || "",
-      utm_source: tracking.utmSource || "",
-      utm_campaign: tracking.utmCampaign || "",
-      utm_content: tracking.utmContent || "",
-      utm_term: tracking.utmTerm || "",
+      productList: [
+        {
+          name: `Tapete Bandeja ${vehicle.brand || ""} ${vehicle.model || ""}`.trim(),
+          value: Number((kitAmountCents / 100).toFixed(2)),
+          sku: "tapete-bandeja",
+        },
+      ],
     };
 
-    const response = await fetch(`${checkoutBaseUrl}/api/checkout`, {
+    const response = await fetch(`${RISEPAY_API_BASE}/api/External/Transactions`, {
       method: "POST",
       headers: {
-        "api-key": apiKey,
-        "x-domain": domain,
+        Authorization: privateToken,
         "Content-Type": "application/json",
         Accept: "application/json",
       },
@@ -259,14 +212,17 @@ exports.handler = async (event) => {
             data?.message ||
             data?.error ||
             data?.errors?.[0]?.message ||
-            "Nao foi possivel gerar o Pix na Vega",
+            "Nao foi possivel gerar o Pix na RisePay",
           raw: data,
         }),
       };
     }
 
-    const extracted = extractVegaResponse(data);
-    const paymentCode = String(extracted.paymentCode || externalCode).trim();
+    const object = data?.object || data || {};
+    const paymentCode = String(object?.identifier || object?.paymentId || externalCode).trim();
+    const pixText = extractPixText(data);
+    const pixImage = extractPixImage(data);
+    const rawStatus = object?.status || data?.status || "Waiting Payment";
 
     return {
       statusCode: 200,
@@ -276,21 +232,21 @@ exports.handler = async (event) => {
         payment_id: paymentCode,
         transactionId: paymentCode,
         transaction_id: paymentCode,
-        status: normalizeStatus(extracted.rawStatus),
-        raw_status: extracted.rawStatus,
+        status: normalizeStatus(rawStatus),
+        raw_status: rawStatus,
         amount: totalAmountCents,
-        total_amount: centsToReais(totalAmountCents),
-        checkout_url: extracted.data?.order_url || extracted.data?.checkout_url || null,
-        pix_payload: extracted.pixText,
-        pix_qrcode: extracted.pixText,
-        pix_qrcode_image: extracted.pixImage,
+        total_amount: Number((totalAmountCents / 100).toFixed(2)),
+        checkout_url: object?.checkout_url || null,
+        pix_payload: pixText,
+        pix_qrcode: pixText,
+        pix_qrcode_image: pixImage,
         pix: {
-          payload: extracted.pixText,
-          qrcode: extracted.pixText,
-          qrCode: extracted.pixText,
-          image: extracted.pixImage,
-          pix_qrcode_text: extracted.pixText,
-          pix_qrcode_image: extracted.pixImage,
+          payload: pixText,
+          qrcode: pixText,
+          qrCode: pixText,
+          image: pixImage,
+          pix_qrcode_text: pixText,
+          pix_qrcode_image: pixImage,
         },
         external_code: externalCode,
         raw: data,

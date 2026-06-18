@@ -20,7 +20,7 @@ exports.handler = async (event) => {
 
   try {
     const payload = JSON.parse(event.body || "{}");
-    console.log("[vega-webhook] received", JSON.stringify(payload));
+    console.log("[risepay-webhook] received", JSON.stringify(payload));
 
     return {
       statusCode: 200,
