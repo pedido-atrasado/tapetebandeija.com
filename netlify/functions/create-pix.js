@@ -41,11 +41,7 @@ function getCheckoutBaseUrl() {
     ""
   ).trim().replace(/\/$/, "");
 
-  if (!baseUrl) {
-    throw new Error("VEGA_CHECKOUT_BASE_URL nao configurado");
-  }
-
-  return baseUrl;
+  return baseUrl || "https://checkout.vegacheckout.com.br";
 }
 
 function getApiKey() {

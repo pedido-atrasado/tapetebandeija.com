@@ -10,12 +10,14 @@ function normalizeStatus(status) {
 }
 
 function getCheckoutBaseUrl() {
-  return String(
+  const baseUrl = String(
     process.env.VEGA_CHECKOUT_BASE_URL ||
     process.env.VEGA_API_BASE_URL ||
     process.env.VEGA_BASE_URL ||
     ""
   ).trim().replace(/\/$/, "");
+
+  return baseUrl || "https://checkout.vegacheckout.com.br";
 }
 
 function getApiKey() {
