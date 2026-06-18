@@ -50,46 +50,19 @@ function getCredentials() {
   return { apiKey, storeCode };
 }
 
-function buildHeaderVariants() {
+function buildHeaders() {
   const { apiKey, storeCode } = getCredentials();
-
   if (!apiKey) {
     throw new Error("MANGOFY_API_KEY nao configurado");
   }
+  if (!storeCode) {
+    throw new Error("MANGOFY_STORE_CODE nao configurado");
+  }
 
-  const variants = [
-    {
-      Authorization: apiKey,
-    },
-    {
-      Authorization: `Bearer ${apiKey}`,
-    },
-    {
-      Authorization: `Token ${apiKey}`,
-    },
-    {
-      Authorization: apiKey,
-      "Store-Code": storeCode,
-    },
-    {
-      Authorization: `Bearer ${apiKey}`,
-      "Store-Code": storeCode,
-    },
-    {
-      Authorization: `Token ${apiKey}`,
-      "Store-Code": storeCode,
-    },
-  ];
-
-  return variants.map((headers) => ({
-    ...headers,
-    "Content-Type": "application/json",
-    Accept: "application/json",
-  }));
-}
-
-function buildHeaders() {
   return {
+    Authorization: apiKey,
+    "X-API-Key": apiKey,
+    "Store-Code": storeCode,
     "Content-Type": "application/json",
     Accept: "application/json",
   };
@@ -229,37 +202,17 @@ exports.handler = async (event) => {
       },
     };
 
-    let response = null;
-    let data = {};
-    let lastAuthError = null;
+    const response = await fetch(`${MANGOFY_API_BASE}/api/v1/payment`, {
+      method: "POST",
+      headers: buildHeaders(),
+      body: JSON.stringify(payload),
+    });
 
-    for (const headers of buildHeaderVariants()) {
-      response = await fetch(`${MANGOFY_API_BASE}/api/v1/payment`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(payload),
-      });
+    const data = await response.json().catch(() => ({}));
 
-      data = await response.json().catch(() => ({}));
-      const message = String(data?.message || data?.error || "").toLowerCase();
-      const authFailed =
-        response.status === 401 ||
-        response.status === 403 ||
-        message.includes("autoriz") ||
-        message.includes("access key") ||
-        message.includes("chave de acesso") ||
-        message.includes("authorization header");
-
-      if (!authFailed) {
-        break;
-      }
-
-      lastAuthError = data;
-    }
-
-    if (!response || !response.ok) {
+    if (!response.ok) {
       return {
-        statusCode: response ? response.status : 500,
+        statusCode: response.status,
         headers: cors,
         body: JSON.stringify({
           error:
@@ -267,7 +220,6 @@ exports.handler = async (event) => {
             data?.error ||
             data?.errors?.[0]?.message ||
             "Nao foi possivel gerar o Pix na Mangoofy",
-          auth_error: lastAuthError || undefined,
           raw: data,
         }),
       };

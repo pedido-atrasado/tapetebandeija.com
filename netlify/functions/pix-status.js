@@ -25,45 +25,21 @@ function getCredentials() {
   };
 }
 
-function buildHeaderVariants() {
+function buildHeaders() {
   const { apiKey, storeCode } = getCredentials();
   if (!apiKey) {
     throw new Error("MANGOFY_API_KEY nao configurado");
   }
+  if (!storeCode) {
+    throw new Error("MANGOFY_STORE_CODE nao configurado");
+  }
 
-  return [
-    {
-      Authorization: apiKey,
-      Accept: "application/json",
-    },
-    {
-      Authorization: apiKey,
-      Accept: "application/json",
-    },
-    {
-      Authorization: `Bearer ${apiKey}`,
-      Accept: "application/json",
-    },
-    {
-      Authorization: `Token ${apiKey}`,
-      Accept: "application/json",
-    },
-    {
-      Authorization: apiKey,
-      "Store-Code": storeCode,
-      Accept: "application/json",
-    },
-    {
-      Authorization: `Bearer ${apiKey}`,
-      "Store-Code": storeCode,
-      Accept: "application/json",
-    },
-    {
-      Authorization: `Token ${apiKey}`,
-      "Store-Code": storeCode,
-      Accept: "application/json",
-    },
-  ];
+  return {
+    Authorization: apiKey,
+    "X-API-Key": apiKey,
+    "Store-Code": storeCode,
+    Accept: "application/json",
+  };
 }
 
 exports.handler = async (event) => {
@@ -101,39 +77,18 @@ exports.handler = async (event) => {
       };
     }
 
-    let response = null;
-    let data = {};
-    let lastAuthError = null;
+    const response = await fetch(`${MANGOFY_API_BASE}/api/v1/payment/${encodeURIComponent(paymentCode)}`, {
+      headers: buildHeaders(),
+    });
 
-    for (const headers of buildHeaderVariants()) {
-      response = await fetch(`${MANGOFY_API_BASE}/api/v1/payment/${encodeURIComponent(paymentCode)}`, {
-        headers,
-      });
+    const data = await response.json().catch(() => ({}));
 
-      data = await response.json().catch(() => ({}));
-      const message = String(data?.message || data?.error || "").toLowerCase();
-      const authFailed =
-        response.status === 401 ||
-        response.status === 403 ||
-        message.includes("autoriz") ||
-        message.includes("access key") ||
-        message.includes("chave de acesso") ||
-        message.includes("authorization header");
-
-      if (!authFailed) {
-        break;
-      }
-
-      lastAuthError = data;
-    }
-
-    if (!response || !response.ok) {
+    if (!response.ok) {
       return {
-        statusCode: response ? response.status : 500,
+        statusCode: response.status,
         headers: cors,
         body: JSON.stringify({
           error: data?.message || data?.error || "Erro ao consultar a Mangoofy",
-          auth_error: lastAuthError || undefined,
           raw: data,
         }),
       };
