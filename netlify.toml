@@ -13,6 +13,11 @@
   status = 200
 
 [[redirects]]
+  from = "/api/vega/webhook"
+  to = "/.netlify/functions/vega-webhook"
+  status = 200
+
+[[redirects]]
   from = "/api/meta-capi/event"
   to = "/.netlify/functions/meta-capi"
   status = 200

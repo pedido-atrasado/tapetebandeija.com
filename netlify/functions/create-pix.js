@@ -1,5 +1,5 @@
-const MANGOFY_API_BASE = "https://checkout.mangofy.com.br";
-const DEFAULT_POSTBACK_PATH = "/api/mangofy/webhook";
+const DEFAULT_SITE_URL = "https://tapetebandeja.netlify.app";
+const DEFAULT_WEBHOOK_PATH = "/api/vega/webhook";
 
 function normalizeDigits(value) {
   return String(value || "").replace(/\D/g, "");
@@ -25,79 +25,124 @@ function getSiteBaseUrl() {
   return (
     String(process.env.SITE_URL || "").trim() ||
     String(process.env.ALLOWED_ORIGIN || "").trim() ||
-    "https://tapetebandeja.netlify.app"
+    DEFAULT_SITE_URL
   ).replace(/\/$/, "");
 }
 
-function getPostbackUrl() {
-  return `${getSiteBaseUrl()}${DEFAULT_POSTBACK_PATH}`;
+function getWebhookUrl() {
+  return `${getSiteBaseUrl()}${DEFAULT_WEBHOOK_PATH}`;
 }
 
-function getCredentials() {
-  const apiKey = String(
-    process.env.MANGOFY_API_KEY ||
-    process.env.MANGOFY_API_TOKEN ||
+function getCheckoutBaseUrl() {
+  const baseUrl = String(
+    process.env.VEGA_CHECKOUT_BASE_URL ||
+    process.env.VEGA_API_BASE_URL ||
+    process.env.VEGA_BASE_URL ||
+    ""
+  ).trim().replace(/\/$/, "");
+
+  if (!baseUrl) {
+    throw new Error("VEGA_CHECKOUT_BASE_URL nao configurado");
+  }
+
+  return baseUrl;
+}
+
+function getApiKey() {
+  return String(
+    process.env.VEGA_API_KEY ||
+    process.env.VEGA_API_TOKEN ||
     process.env.API_KEY ||
     ""
   ).trim();
+}
 
-  const storeCode = String(
-    process.env.MANGOFY_STORE_CODE ||
-    process.env.STORE_CODE ||
-    ""
-  ).trim();
+function getDomainHeader() {
+  const explicit = String(process.env.VEGA_DOMAIN || process.env.VEGA_CHECKOUT_DOMAIN || "").trim();
+  if (explicit) {
+    return explicit.replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
+  }
 
-  return { apiKey, storeCode };
+  try {
+    return new URL(getCheckoutBaseUrl()).hostname;
+  } catch {
+    return new URL(getSiteBaseUrl()).hostname;
+  }
 }
 
 function buildHeaders() {
-  const { apiKey, storeCode } = getCredentials();
+  const apiKey = getApiKey();
+  const domain = getDomainHeader();
+
   if (!apiKey) {
-    throw new Error("MANGOFY_API_KEY nao configurado");
+    throw new Error("VEGA_API_KEY nao configurado");
   }
-  if (!storeCode) {
-    throw new Error("MANGOFY_STORE_CODE nao configurado");
+  if (!domain) {
+    throw new Error("VEGA_DOMAIN nao configurado");
   }
 
   return {
-    Authorization: apiKey,
-    "X-API-Key": apiKey,
-    "Store-Code": storeCode,
+    "api-key": apiKey,
+    "x-domain": domain,
     "Content-Type": "application/json",
     Accept: "application/json",
   };
 }
 
-function normalizeResponseStatus(status) {
+function normalizeStatus(status) {
   const value = String(status || "").trim().toLowerCase();
   if (!value) return "pending";
   if (["paid", "approved", "authorized", "closed"].includes(value)) return "paid";
-  if (["pending", "waiting", "waiting_payment", "in_process", "processing"].includes(value)) return "pending";
+  if (["pending", "waiting", "waiting_payment", "in_process", "processing", "success"].includes(value)) return "pending";
   if (["refused", "canceled", "cancelled", "expired", "gateway_error", "system_error", "failed"].includes(value)) return "failed";
   return value;
 }
 
-function extractPixText(data) {
-  return (
-    data?.pix?.pix_qrcode_text ||
-    data?.pix?.qrcode_text ||
-    data?.pix?.pix_qrcode ||
-    data?.pix?.payload ||
-    data?.pix_qrcode_text ||
-    data?.pix_qrcode ||
-    data?.payment?.pix?.pix_qrcode_text ||
-    ""
-  );
+function buildCustomerAddress(shipping, body) {
+  const address = shipping?.address || body?.address || body?.customer?.address || {};
+  return {
+    street: String(address.street || "").trim(),
+    number: String(address.number || "").trim(),
+    complement: String(address.complement || "").trim(),
+    district: String(address.neighborhood || address.district || "").trim(),
+    city: String(address.city || "").trim(),
+    state: String(address.state || "").trim(),
+    zipcode: normalizeDigits(address.zipCode || address.zipcode || ""),
+    country: "BR",
+  };
 }
 
-function extractPixImage(data) {
-  return (
-    data?.pix?.pix_qrcode_image ||
-    data?.pix?.qrcode_image ||
+function extractVegaResponse(root) {
+  const data = root?.data || root || {};
+  const pixText =
+    data?.pix_copy_paste ||
+    data?.pix_qrcode_text ||
+    data?.pix_qrcode ||
+    data?.pix?.pix_copy_paste ||
+    data?.pix?.pix_qrcode_text ||
     data?.pix?.qrcode ||
+    root?.pix_copy_paste ||
+    "";
+
+  const pixImage =
+    data?.pix_code_image64 ||
+    data?.pix_qrcode_image64 ||
     data?.pix_qrcode_image ||
-    ""
-  );
+    data?.pix?.pix_code_image64 ||
+    data?.pix?.pix_qrcode_image ||
+    root?.pix_code_image64 ||
+    "";
+
+  const paymentCode =
+    data?.transaction_token ||
+    data?.payment_code ||
+    data?.external_code ||
+    root?.transaction_token ||
+    "";
+
+  const rawStatus = data?.payment_status || data?.status || root?.payment_status || root?.status || "pending";
+
+  return { pixText, pixImage, paymentCode, rawStatus, data };
 }
 
 exports.handler = async (event) => {
@@ -121,6 +166,14 @@ exports.handler = async (event) => {
   }
 
   try {
+    const checkoutBaseUrl = getCheckoutBaseUrl();
+    const apiKey = getApiKey();
+    const domain = getDomainHeader();
+
+    if (!apiKey) {
+      throw new Error("VEGA_API_KEY nao configurado");
+    }
+
     const body = JSON.parse(event.body || "{}");
     const vehicle = body.vehicle || {};
     const pricing = body.pricing || {};
@@ -131,6 +184,7 @@ exports.handler = async (event) => {
     const totalAmountCents = Number(pricing.totalAmountCents ?? pricing.totalAmount ?? body.amount ?? 0) || 0;
     const kitAmountCents = Number(pricing.kitAmountCents ?? 0) || Math.max(totalAmountCents - Number(pricing.shippingAmountCents ?? 0), 0);
     const shippingAmountCents = Number(pricing.shippingAmountCents ?? 0) || 0;
+    const discountAmountCents = Number(pricing.pixDiscountCents ?? 0) || 0;
 
     if (totalAmountCents < 500) {
       return {
@@ -152,59 +206,49 @@ exports.handler = async (event) => {
 
     const externalCode = makeExternalCode();
     const payload = {
-      external_code: externalCode,
-      payment_format: "regular",
-      payment_method: "pix",
-      installments: 1,
-      payment_amount: totalAmountCents,
-      shipping_amount: shippingAmountCents,
-      postback_url: getPostbackUrl(),
-      items: [
+      customer: {
+        name: String(customer.name || "").trim(),
+        email: String(customer.email || "").trim(),
+        document: normalizeDigits(customer.cpf),
+        phone: normalizePhoneForGateway(customer.phone || customer.phone_number || ""),
+        address: buildCustomerAddress(shipping, body),
+      },
+      payment: {
+        method: "pix",
+        payment_value: totalAmountCents,
+        freight_value: shippingAmountCents,
+        discount_value: discountAmountCents,
+        external_code: externalCode,
+        currency: "BRL",
+      },
+      products: [
         {
           code: "tapete-bandeja",
           name: `Tapete Bandeja ${vehicle.brand || ""} ${vehicle.model || ""}`.trim(),
-          quantity: 1,
           price: kitAmountCents || totalAmountCents,
-          photo: "",
+          quantity: 1,
+          is_digital: false,
           description: "Tapete Bandeja 3D",
-          digital_flag: false,
+          image_url: String(vehicle.image || "").trim(),
         },
       ],
-      customer: {
-        email: String(customer.email || "").trim(),
-        name: String(customer.name || "").trim(),
-        document: normalizeDigits(customer.cpf),
-        phone: normalizePhoneForGateway(customer.phone || customer.phone_number || ""),
-        ip:
-          String(event.headers?.["x-forwarded-for"] || event.headers?.["X-Forwarded-For"] || "").split(",")[0].trim() ||
-          String(event.headers?.["client-ip"] || event.headers?.["Client-IP"] || "").trim() ||
-          "127.0.0.1",
-      },
-      pix: {
-        expires_in_days: 1,
-      },
-      extra: {
-        metadata: {
-          utm_source: tracking.utmSource || "",
-          utm_medium: tracking.utmMedium || "",
-          utm_campaign: tracking.utmCampaign || "",
-          utm_term: tracking.utmTerm || "",
-          utm_content: tracking.utmContent || "",
-          page_url: tracking.pageUrl || "",
-          pedido_origem: "checkout-api",
-          vehicle_type: vehicle.type || "",
-          brand: vehicle.brand || "",
-          model: vehicle.model || "",
-          year: vehicle.year || "",
-          color: vehicle.color || "",
-          kit: vehicle.kit || "",
-        },
-      },
+      notification_url: getWebhookUrl(),
+      src: tracking.src || "checkout_web",
+      utm_medium: tracking.utmMedium || "",
+      utm_source: tracking.utmSource || "",
+      utm_campaign: tracking.utmCampaign || "",
+      utm_content: tracking.utmContent || "",
+      utm_term: tracking.utmTerm || "",
     };
 
-    const response = await fetch(`${MANGOFY_API_BASE}/api/v1/payment`, {
+    const response = await fetch(`${checkoutBaseUrl}/api/checkout`, {
       method: "POST",
-      headers: buildHeaders(),
+      headers: {
+        "api-key": apiKey,
+        "x-domain": domain,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
       body: JSON.stringify(payload),
     });
 
@@ -219,22 +263,14 @@ exports.handler = async (event) => {
             data?.message ||
             data?.error ||
             data?.errors?.[0]?.message ||
-            "Nao foi possivel gerar o Pix na Mangoofy",
+            "Nao foi possivel gerar o Pix na Vega",
           raw: data,
         }),
       };
     }
 
-    const paymentCode = String(
-      data?.payment_code ||
-      data?.payment?.payment_code ||
-      data?.code ||
-      externalCode
-    ).trim();
-
-    const pixText = extractPixText(data);
-    const pixImage = extractPixImage(data);
-    const paymentStatus = normalizeResponseStatus(data?.payment_status || data?.status || "pending");
+    const extracted = extractVegaResponse(data);
+    const paymentCode = String(extracted.paymentCode || externalCode).trim();
 
     return {
       statusCode: 200,
@@ -244,21 +280,21 @@ exports.handler = async (event) => {
         payment_id: paymentCode,
         transactionId: paymentCode,
         transaction_id: paymentCode,
-        status: paymentStatus,
-        raw_status: data?.payment_status || data?.status || "pending",
+        status: normalizeStatus(extracted.rawStatus),
+        raw_status: extracted.rawStatus,
         amount: totalAmountCents,
         total_amount: centsToReais(totalAmountCents),
-        checkout_url: data?.checkout_url || null,
-        pix_payload: pixText,
-        pix_qrcode: pixText,
-        pix_qrcode_image: pixImage,
+        checkout_url: extracted.data?.order_url || extracted.data?.checkout_url || null,
+        pix_payload: extracted.pixText,
+        pix_qrcode: extracted.pixText,
+        pix_qrcode_image: extracted.pixImage,
         pix: {
-          payload: pixText,
-          qrcode: pixText,
-          qrCode: pixText,
-          image: pixImage,
-          pix_qrcode_text: pixText,
-          pix_qrcode_image: pixImage,
+          payload: extracted.pixText,
+          qrcode: extracted.pixText,
+          qrCode: extracted.pixText,
+          image: extracted.pixImage,
+          pix_qrcode_text: extracted.pixText,
+          pix_qrcode_image: extracted.pixImage,
         },
         external_code: externalCode,
         raw: data,
