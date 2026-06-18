@@ -74,6 +74,30 @@ function extractPixImage(data) {
   );
 }
 
+function extractErrorMessage(data) {
+  const errors = data?.errors;
+  if (Array.isArray(errors) && errors.length > 0) {
+    const list = errors
+      .map((item) => {
+        if (typeof item === "string") return item;
+        if (item && typeof item === "object") return item.message || item.error || JSON.stringify(item);
+        return "";
+      })
+      .filter(Boolean);
+    if (list.length > 0) return list.join(" | ");
+  }
+
+  return (
+    data?.message ||
+    data?.title ||
+    data?.detail ||
+    data?.error ||
+    data?.errors?.[0]?.message ||
+    data?.errors?.[0]?.error ||
+    ""
+  );
+}
+
 exports.handler = async (event) => {
   const cors = {
     "Access-Control-Allow-Origin": process.env.ALLOWED_ORIGIN || "*",
@@ -208,11 +232,7 @@ exports.handler = async (event) => {
         statusCode: response.status,
         headers: cors,
         body: JSON.stringify({
-          error:
-            data?.message ||
-            data?.error ||
-            data?.errors?.[0]?.message ||
-            "Nao foi possivel gerar o Pix na RisePay",
+          error: extractErrorMessage(data) || "Nao foi possivel gerar o Pix na RisePay",
           raw: data,
         }),
       };
