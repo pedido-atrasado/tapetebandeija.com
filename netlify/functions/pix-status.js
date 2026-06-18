@@ -34,8 +34,18 @@ function buildHeaderVariants() {
   return [
     {
       Authorization: apiKey,
-      "X-API-Key": apiKey,
-      "Store-Code": storeCode,
+      Accept: "application/json",
+    },
+    {
+      Authorization: apiKey,
+      Accept: "application/json",
+    },
+    {
+      Authorization: `Bearer ${apiKey}`,
+      Accept: "application/json",
+    },
+    {
+      Authorization: `Token ${apiKey}`,
       Accept: "application/json",
     },
     {

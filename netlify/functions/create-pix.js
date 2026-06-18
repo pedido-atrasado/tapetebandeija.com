@@ -60,8 +60,12 @@ function buildHeaderVariants() {
   const variants = [
     {
       Authorization: apiKey,
-      "X-API-Key": apiKey,
-      "Store-Code": storeCode,
+    },
+    {
+      Authorization: `Bearer ${apiKey}`,
+    },
+    {
+      Authorization: `Token ${apiKey}`,
     },
     {
       Authorization: apiKey,
