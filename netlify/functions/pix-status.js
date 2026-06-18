@@ -9,32 +9,51 @@ function normalizeStatus(status) {
   return value;
 }
 
-function buildHeaders() {
-  const apiKey = String(
-    process.env.MANGOFY_API_KEY ||
-    process.env.MANGOFY_API_TOKEN ||
-    process.env.API_KEY ||
-    ""
-  ).trim();
+function getCredentials() {
+  return {
+    apiKey: String(
+      process.env.MANGOFY_API_KEY ||
+      process.env.MANGOFY_API_TOKEN ||
+      process.env.API_KEY ||
+      ""
+    ).trim(),
+    storeCode: String(
+      process.env.MANGOFY_STORE_CODE ||
+      process.env.STORE_CODE ||
+      ""
+    ).trim(),
+  };
+}
+
+function buildHeaderVariants() {
+  const { apiKey, storeCode } = getCredentials();
   if (!apiKey) {
     throw new Error("MANGOFY_API_KEY nao configurado");
   }
 
-  const storeCode = String(
-    process.env.MANGOFY_STORE_CODE ||
-    process.env.STORE_CODE ||
-    ""
-  ).trim();
-  if (!storeCode) {
-    throw new Error("MANGOFY_STORE_CODE nao configurado");
-  }
-
-  return {
-    Authorization: apiKey,
-    "X-API-Key": apiKey,
-    "Store-Code": storeCode,
-    Accept: "application/json",
-  };
+  return [
+    {
+      Authorization: apiKey,
+      "X-API-Key": apiKey,
+      "Store-Code": storeCode,
+      Accept: "application/json",
+    },
+    {
+      Authorization: apiKey,
+      "Store-Code": storeCode,
+      Accept: "application/json",
+    },
+    {
+      Authorization: `Bearer ${apiKey}`,
+      "Store-Code": storeCode,
+      Accept: "application/json",
+    },
+    {
+      Authorization: `Token ${apiKey}`,
+      "Store-Code": storeCode,
+      Accept: "application/json",
+    },
+  ];
 }
 
 exports.handler = async (event) => {
@@ -72,18 +91,39 @@ exports.handler = async (event) => {
       };
     }
 
-    const response = await fetch(`${MANGOFY_API_BASE}/api/v1/payment/${encodeURIComponent(paymentCode)}`, {
-      headers: buildHeaders(),
-    });
+    let response = null;
+    let data = {};
+    let lastAuthError = null;
 
-    const data = await response.json().catch(() => ({}));
+    for (const headers of buildHeaderVariants()) {
+      response = await fetch(`${MANGOFY_API_BASE}/api/v1/payment/${encodeURIComponent(paymentCode)}`, {
+        headers,
+      });
 
-    if (!response.ok) {
+      data = await response.json().catch(() => ({}));
+      const message = String(data?.message || data?.error || "").toLowerCase();
+      const authFailed =
+        response.status === 401 ||
+        response.status === 403 ||
+        message.includes("autoriz") ||
+        message.includes("access key") ||
+        message.includes("chave de acesso") ||
+        message.includes("authorization header");
+
+      if (!authFailed) {
+        break;
+      }
+
+      lastAuthError = data;
+    }
+
+    if (!response || !response.ok) {
       return {
-        statusCode: response.status,
+        statusCode: response ? response.status : 500,
         headers: cors,
         body: JSON.stringify({
           error: data?.message || data?.error || "Erro ao consultar a Mangoofy",
+          auth_error: lastAuthError || undefined,
           raw: data,
         }),
       };

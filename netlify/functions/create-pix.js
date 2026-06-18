@@ -33,6 +33,57 @@ function getPostbackUrl() {
   return `${getSiteBaseUrl()}${DEFAULT_POSTBACK_PATH}`;
 }
 
+function getCredentials() {
+  const apiKey = String(
+    process.env.MANGOFY_API_KEY ||
+    process.env.MANGOFY_API_TOKEN ||
+    process.env.API_KEY ||
+    ""
+  ).trim();
+
+  const storeCode = String(
+    process.env.MANGOFY_STORE_CODE ||
+    process.env.STORE_CODE ||
+    ""
+  ).trim();
+
+  return { apiKey, storeCode };
+}
+
+function buildHeaderVariants() {
+  const { apiKey, storeCode } = getCredentials();
+
+  if (!apiKey) {
+    throw new Error("MANGOFY_API_KEY nao configurado");
+  }
+
+  const variants = [
+    {
+      Authorization: apiKey,
+      "X-API-Key": apiKey,
+      "Store-Code": storeCode,
+    },
+    {
+      Authorization: apiKey,
+      "Store-Code": storeCode,
+    },
+    {
+      Authorization: `Bearer ${apiKey}`,
+      "Store-Code": storeCode,
+    },
+    {
+      Authorization: `Token ${apiKey}`,
+      "Store-Code": storeCode,
+    },
+  ];
+
+  return variants.map((headers) => ({
+    ...headers,
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  }));
+}
+
 function buildHeaders() {
   return {
     "Content-Type": "application/json",
@@ -123,66 +174,88 @@ exports.handler = async (event) => {
     }
 
     const externalCode = makeExternalCode();
-    const response = await fetch(`${MANGOFY_API_BASE}/api/v1/payment`, {
-      method: "POST",
-      headers: buildHeaders(),
-      body: JSON.stringify({
-        external_code: externalCode,
-        payment_format: "regular",
-        payment_method: "pix",
-        installments: 1,
-        payment_amount: totalAmountCents,
-        shipping_amount: shippingAmountCents,
-        postback_url: getPostbackUrl(),
-        items: [
-          {
-            code: "tapete-bandeja",
-            name: `Tapete Bandeja ${vehicle.brand || ""} ${vehicle.model || ""}`.trim(),
-            quantity: 1,
-            price: kitAmountCents || totalAmountCents,
-            photo: "",
-            description: "Tapete Bandeja 3D",
-            digital_flag: false,
-          },
-        ],
-        customer: {
-          email: String(customer.email || "").trim(),
-          name: String(customer.name || "").trim(),
-          document: normalizeDigits(customer.cpf),
-          phone: normalizePhoneForGateway(customer.phone || customer.phone_number || ""),
-          ip:
-            String(event.headers?.["x-forwarded-for"] || event.headers?.["X-Forwarded-For"] || "").split(",")[0].trim() ||
-            String(event.headers?.["client-ip"] || event.headers?.["Client-IP"] || "").trim() ||
-            "127.0.0.1",
+    const payload = {
+      external_code: externalCode,
+      payment_format: "regular",
+      payment_method: "pix",
+      installments: 1,
+      payment_amount: totalAmountCents,
+      shipping_amount: shippingAmountCents,
+      postback_url: getPostbackUrl(),
+      items: [
+        {
+          code: "tapete-bandeja",
+          name: `Tapete Bandeja ${vehicle.brand || ""} ${vehicle.model || ""}`.trim(),
+          quantity: 1,
+          price: kitAmountCents || totalAmountCents,
+          photo: "",
+          description: "Tapete Bandeja 3D",
+          digital_flag: false,
         },
-        pix: {
-          expires_in_days: 1,
+      ],
+      customer: {
+        email: String(customer.email || "").trim(),
+        name: String(customer.name || "").trim(),
+        document: normalizeDigits(customer.cpf),
+        phone: normalizePhoneForGateway(customer.phone || customer.phone_number || ""),
+        ip:
+          String(event.headers?.["x-forwarded-for"] || event.headers?.["X-Forwarded-For"] || "").split(",")[0].trim() ||
+          String(event.headers?.["client-ip"] || event.headers?.["Client-IP"] || "").trim() ||
+          "127.0.0.1",
+      },
+      pix: {
+        expires_in_days: 1,
+      },
+      extra: {
+        metadata: {
+          utm_source: tracking.utmSource || "",
+          utm_medium: tracking.utmMedium || "",
+          utm_campaign: tracking.utmCampaign || "",
+          utm_term: tracking.utmTerm || "",
+          utm_content: tracking.utmContent || "",
+          page_url: tracking.pageUrl || "",
+          pedido_origem: "checkout-api",
+          vehicle_type: vehicle.type || "",
+          brand: vehicle.brand || "",
+          model: vehicle.model || "",
+          year: vehicle.year || "",
+          color: vehicle.color || "",
+          kit: vehicle.kit || "",
         },
-        extra: {
-          metadata: {
-            utm_source: tracking.utmSource || "",
-            utm_medium: tracking.utmMedium || "",
-            utm_campaign: tracking.utmCampaign || "",
-            utm_term: tracking.utmTerm || "",
-            utm_content: tracking.utmContent || "",
-            page_url: tracking.pageUrl || "",
-            pedido_origem: "checkout-api",
-            vehicle_type: vehicle.type || "",
-            brand: vehicle.brand || "",
-            model: vehicle.model || "",
-            year: vehicle.year || "",
-            color: vehicle.color || "",
-            kit: vehicle.kit || "",
-          },
-        },
-      }),
-    });
+      },
+    };
 
-    const data = await response.json().catch(() => ({}));
+    let response = null;
+    let data = {};
+    let lastAuthError = null;
 
-    if (!response.ok) {
+    for (const headers of buildHeaderVariants()) {
+      response = await fetch(`${MANGOFY_API_BASE}/api/v1/payment`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+      });
+
+      data = await response.json().catch(() => ({}));
+      const message = String(data?.message || data?.error || "").toLowerCase();
+      const authFailed =
+        response.status === 401 ||
+        response.status === 403 ||
+        message.includes("autoriz") ||
+        message.includes("access key") ||
+        message.includes("chave de acesso") ||
+        message.includes("authorization header");
+
+      if (!authFailed) {
+        break;
+      }
+
+      lastAuthError = data;
+    }
+
+    if (!response || !response.ok) {
       return {
-        statusCode: response.status,
+        statusCode: response ? response.status : 500,
         headers: cors,
         body: JSON.stringify({
           error:
@@ -190,6 +263,7 @@ exports.handler = async (event) => {
             data?.error ||
             data?.errors?.[0]?.message ||
             "Nao foi possivel gerar o Pix na Mangoofy",
+          auth_error: lastAuthError || undefined,
           raw: data,
         }),
       };
