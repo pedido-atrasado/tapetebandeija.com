@@ -35,7 +35,7 @@ exports.handler = async (event) => {
     };
   }
 
-  const pixelId = String(process.env.META_PIXEL_ID || "1005940471910890").trim();
+  const pixelId = String(process.env.META_PIXEL_ID || "2066750830865892").trim();
   const accessToken = String(process.env.META_ACCESS_TOKEN || "").trim();
 
   if (!accessToken) {
