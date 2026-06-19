@@ -13,8 +13,8 @@
   status = 200
 
 [[redirects]]
-  from = "/api/risepay/webhook"
-  to = "/.netlify/functions/risepay-webhook"
+  from = "/api/vega/webhook"
+  to = "/.netlify/functions/vega-webhook"
   status = 200
 
 [[redirects]]
