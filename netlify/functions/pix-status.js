@@ -23,23 +23,14 @@ function getCheckoutBaseUrl() {
 function getApiKey() {
   return String(
     process.env.VEGA_API_KEY ||
-    process.env.VEGA_CLIENT_SECRET ||
-    process.env.CLIENT_SECRET ||
     process.env.VEGA_API_TOKEN ||
-    process.env.PAYMENTS_API_KEY ||
     process.env.API_KEY ||
-    process.env.SUNIZE_API_KEY ||
     ""
   ).trim();
 }
 
 function getDomainHeader() {
-  const explicit = String(
-    process.env.VEGA_DOMAIN ||
-    process.env.VEGA_CHECKOUT_DOMAIN ||
-    process.env.PAYMENTS_DOMAIN ||
-    ""
-  ).trim();
+  const explicit = String(process.env.VEGA_DOMAIN || process.env.VEGA_CHECKOUT_DOMAIN || "").trim();
   if (explicit) {
     return explicit.replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
   }
